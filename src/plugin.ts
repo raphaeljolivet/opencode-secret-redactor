@@ -39,13 +39,14 @@ function redactParts(
 }
 
 // Named export for programmatic consumers
-export const SecretRedactor: Plugin = async ({ client }) => {
+export const SecretRedactor: Plugin = async ({ client, directory }) => {
   const [
-    { REDACT_OUTPUT_TOOLS, UNREDACT_ARGS_TOOLS },
+    { REDACT_OUTPUT_TOOLS, UNREDACT_ARGS_TOOLS, configure, loadConfig },
     { redactDeep, unredactDeep },
     { createVault },
   ] = await Promise.all([import("./config.js"), import("./redactor.js"), import("./vault.js")]);
 
+  configure(loadConfig(directory));
   const vault = createVault();
 
   return {

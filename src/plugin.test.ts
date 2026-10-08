@@ -1,5 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SecretRedactor } from "./plugin.js";
+
+const GITHUB_PAT = "ghp_R8z3kL9mN2pQ5tV7wX0yB4dF6hJ1oS3uA8cE";
+const tempDirs: string[] = [];
+
+function makeDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeProjectConfig(project: string, config: unknown): void {
+  mkdirSync(join(project, ".opencode"), { recursive: true });
+  writeFileSync(join(project, ".opencode", "secret-redactor.json"), JSON.stringify(config));
+}
 
 function createMockClient() {
   return {
@@ -8,6 +25,22 @@ function createMockClient() {
     },
   };
 }
+
+// Keep tests independent from any real global opencode config file.
+beforeEach(() => {
+  vi.stubEnv("OPENCODE_CONFIG_DIR", makeDir("secret-redactor-global-"));
+  vi.stubEnv("SECRET_REDACTOR_CONFIG", "");
+  vi.stubEnv("SECRET_REDACTOR_ENABLE", "");
+  vi.stubEnv("SECRET_REDACTOR_DISABLE", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+afterAll(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("SecretRedactor plugin", () => {
   it("initializes and returns hook handlers", async () => {
@@ -214,5 +247,86 @@ describe("SecretRedactor plugin", () => {
         variant: "warning",
       },
     });
+  });
+
+  it("does not redact email addresses by default", async () => {
+    const client = createMockClient();
+    const hooks = await SecretRedactor({ client } as never);
+    const afterHook = hooks["tool.execute.after"] as (
+      input: Record<string, unknown>,
+      output: Record<string, unknown>,
+    ) => Promise<void>;
+
+    const output = { output: "contact john.doe@example.com for info" };
+    await afterHook({ tool: "read" }, output);
+
+    expect(output.output).toBe("contact john.doe@example.com for info");
+    expect(client.tui.showToast).not.toHaveBeenCalled();
+  });
+
+  it("redacts email addresses when the config enables the pattern", async () => {
+    const project = makeDir("secret-redactor-project-");
+    writeProjectConfig(project, { enable: ["email"] });
+
+    const client = createMockClient();
+    const hooks = await SecretRedactor({ client, directory: project } as never);
+    const afterHook = hooks["tool.execute.after"] as (
+      input: Record<string, unknown>,
+      output: Record<string, unknown>,
+    ) => Promise<void>;
+
+    const output = { output: "contact john.doe@example.com for info" };
+    await afterHook({ tool: "read" }, output);
+
+    expect(output.output).toMatch(/^contact 🔒email_\d+🔓 for info$/);
+  });
+
+  it("does not redact placeholder values such as ${DB_PASSWORD}", async () => {
+    const client = createMockClient();
+    const hooks = await SecretRedactor({ client } as never);
+    const afterHook = hooks["tool.execute.after"] as (
+      input: Record<string, unknown>,
+      output: Record<string, unknown>,
+    ) => Promise<void>;
+
+    const output = { output: "password: ${DB_PASSWORD}" };
+    await afterHook({ tool: "read" }, output);
+
+    expect(output.output).toBe("password: ${DB_PASSWORD}");
+    expect(client.tui.showToast).not.toHaveBeenCalled();
+  });
+
+  it("honours a project config file that disables a pattern", async () => {
+    const project = makeDir("secret-redactor-project-");
+    writeProjectConfig(project, { disable: ["github_pat"] });
+
+    const client = createMockClient();
+    const hooks = await SecretRedactor({ client, directory: project } as never);
+    const afterHook = hooks["tool.execute.after"] as (
+      input: Record<string, unknown>,
+      output: Record<string, unknown>,
+    ) => Promise<void>;
+
+    const output = { output: `token: ${GITHUB_PAT}` };
+    await afterHook({ tool: "bash" }, output);
+
+    expect(output.output).toBe(`token: ${GITHUB_PAT}`);
+    expect(client.tui.showToast).not.toHaveBeenCalled();
+  });
+
+  it("honours SECRET_REDACTOR_DISABLE from the environment", async () => {
+    vi.stubEnv("SECRET_REDACTOR_DISABLE", "github_pat");
+
+    const client = createMockClient();
+    const hooks = await SecretRedactor({ client } as never);
+    const afterHook = hooks["tool.execute.after"] as (
+      input: Record<string, unknown>,
+      output: Record<string, unknown>,
+    ) => Promise<void>;
+
+    const output = { output: `token: ${GITHUB_PAT}` };
+    await afterHook({ tool: "bash" }, output);
+
+    expect(output.output).toBe(`token: ${GITHUB_PAT}`);
   });
 });
