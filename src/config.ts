@@ -3,8 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { PATTERNS, type SecretPattern } from "./patterns.js";
 
-export const REDACT_OUTPUT_TOOLS = ["bash", "read", "grep", "webfetch"] as const;
-export const UNREDACT_ARGS_TOOLS = ["bash", "write", "edit"] as const;
+export const REDACT_OUTPUT_TOOLS = ["shell", "read", "grep", "webfetch"] as const;
+export const UNREDACT_ARGS_TOOLS = ["shell", "write", "edit"] as const;
 export const MIN_SECRET_LENGTH = 8;
 export const REDACTED_PREFIX = "🔒";
 export const REDACTED_SUFFIX = "🔓";

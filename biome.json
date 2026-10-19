@@ -30,6 +30,7 @@
       "linter": {
         "rules": {
           "suspicious": {
+            "noExplicitAny": "off",
             "noTemplateCurlyInString": "off"
           }
         }

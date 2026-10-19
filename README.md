@@ -5,10 +5,12 @@ into LLM context. Secrets detected in tool output are replaced with
 `🔒label🔓` tokens before the model sees them, then transparently
 restored when a tool needs the real value for execution.
 
-> **Fork note:** the upstream package (0.5.1) does not load on opencode >= 1.18
-> (`"Plugin export is not a function"` — see
-> [opencode #31575](https://github.com/anomalyco/opencode/issues/31575)).
-> This fork fixes the packaging. The fixed build is published on npm as
+> **V2 note:** this build targets the OpenCode **2.x** plugin API
+> (`@opencode/plugin`). OpenCode 2 replaced the V1 plugin contract
+> (`"Plugin export is not a function"` on V1 packages — see
+> [opencode #31575](https://github.com/anomalyco/opencode/issues/31575)),
+> so the V1 plugin is a full rewrite, not a rename. For OpenCode 2.0 and
+> newer use this package; it is published on npm as
 > **`opencode-secret-redactor-fixed`**.
 
 ## Detected secret types
@@ -20,24 +22,27 @@ connection strings, and many more. See
 
 ## Setup
 
-Add the plugin to your `opencode.json`:
+Add the plugin to `opencode.json(c)` using the V2 `plugins` list:
 
 ```json
 {
-  "plugin": ["opencode-secret-redactor-fixed"]
+  "plugins": ["opencode-secret-redactor-fixed"]
 }
 ```
 
-or for the original (broken-on-1.18) package:
+A single local file is not a valid plugin entry in V2; point the config at a
+**directory** or drop the plugin under `.opencode/plugins/`. From a checkout of
+this repository:
 
 ```json
 {
-  "plugin": ["opencode-secret-redactor@0.5.1"]
+  "plugins": ["/absolute/path/to/opencode-secret-redactor"]
 }
 ```
 
-The plugin hooks into tool execution automatically -- no configuration is
-required to start.
+The plugin hooks into execution automatically -- no configuration is required
+to start.
+
 
 ## Configuration
 
@@ -112,21 +117,43 @@ const hits = detectSecrets(fs.readFileSync("settings.yml", "utf8"));
 
 ## How it works
 
-1. **After** `bash` or `read` tool output, the plugin scans for secrets using
-   pattern matching and stores any matches in an in-memory vault.
-2. The output sent to the LLM contains only redacted placeholders.
-3. **Before** `bash`, `write`, or `edit` tool execution, placeholders in the
-   tool arguments are replaced with the original values so commands run
-   correctly.
+The plugin is a V2 definition (`{ id, setup }`) that registers hooks on the
+domains that own each operation:
 
-## What was fixed
+1. `session.hook("prompt")` redacts secrets in the user prompt before it is
+   persisted, so a secret typed into the chat never reaches the transcript or
+   the model as plaintext.
+2. `session.hook("context")`, together with `"compaction"`, `"generate"`, and
+   `"title"`, redacts every model-visible string in an assembled request —
+   message text, reasoning, tool-call inputs, tool results, and system
+   instructions — immediately before dispatch. Persisted history is not
+   modified; only the outgoing request is.
+3. `tool.hook("execute.after")` redacts the output of `shell`, `read`, `grep`,
+   and `webfetch` before it enters context, storing each value in an in-memory
+   vault.
+4. `tool.hook("execute.before")` restores real values in `shell`, `write`, and
+   `edit` arguments, so a command or file write built from a placeholder runs
+   against the real secret.
 
-- The default export is now the `{ id, server }` object form, which opencode's
-  loader resolves via `readV1Plugin` instead of the legacy `getLegacyPlugins`
-  path (the source of the load failure).
-- A new `exports["./server"]` entry points opencode to the ESM build
-  (`dist/plugin.js`), avoiding the CJS interop object that broke loading.
+OpenCode 2 renamed the shell tool from `bash` to `shell`; the default tool
+scopes account for that.
+
+## Migration to V2
+
+- The default export is now an OpenCode 2 plugin definition
+  (`Plugin.define({ id, setup })`), registered through the V2 hook domains
+  instead of a map of `"tool.execute.*"` string keys.
+- The V1 `chat.message` hook became `session.hook("prompt")`; the
+  `experimental.chat.messages.transform` hook became
+  `session.hook("context")` (with `compaction`, `generate`, and `title`
+  registered for the auxiliary request kinds).
+- The plugin no longer imports `@opencode/plugin` at runtime: it uses the
+  package only for types, so the built module is self-contained.
+- TUI toasts were dropped. V2 server plugins have no toast API; toasts belong
+  to CLI plugins under `@opencode/plugin/tui`, which receive no server-side
+  redaction events.
 
 ## License
 
 [MIT](LICENSE)
+
